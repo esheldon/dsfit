@@ -18,13 +18,6 @@ from esutil.numpy_util import where1
 from esutil.stat.util import interplin
 
 from . import project
-from .util import (
-    OMEGA_M_DEFAULT,
-    OMEGA_B_DEFAULT,
-    SIGMA_8_DEFAULT,
-    H_DEFAULT,
-    NS_DEFAULT,
-)
 
 class Linear(object):
     """
@@ -40,7 +33,7 @@ class Linear(object):
     ):
         self.cosmo_pars = cosmo_pars
 
-        self.ehu = EisenHu()
+        self.ehu = EisenHu(cosmo_pars=cosmo_pars)
 
         self.qg1000 = eu.integrate.QGauss(npts=1000)
 
@@ -88,7 +81,7 @@ class Linear(object):
         # no smoothing (s=0)
         nx = xinterp.size
         yinterp = numpy.zeros(nx,dtype='f8')
-        for i in xrange(xinterp.size):
+        for i in range(xinterp.size):
             # get closest point that is greater
             ii=x.searchsorted(xinterp[i])
 
@@ -616,7 +609,7 @@ class Linear(object):
 
 
 class EisenHu(object):
-    def __init__(self, cosmo_pars):
+    def __init__(self, *, cosmo_pars):
 
         self.cosmo_pars = cosmo_pars
 

@@ -47,15 +47,15 @@ def project3d(r, rho, extrapolate=True):
         return sig
 
     sig = numpy.zeros(nr, dtype="f8")
-    for j in xrange(nr - 2):
+    for j in range(nr - 2):
         RR = r[j]
         RR2 = RR ** 2
         num = nr - j
         Int = numpy.zeros(num, dtype="f8")
 
-        for i in xrange(num - 2):
-            x = r[i + j : i + j + 3]
-            y = rho[i + j : i + j + 3]
+        for i in range(num - 2):
+            x = r[i + j: i + j + 3]
+            y = rho[i + j: i + j + 3]
             p = lag_quad_poly(x, y)
             A = x[0]
             B = x[1]
