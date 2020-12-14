@@ -42,7 +42,7 @@ class NFWBiasFitter(object):
             print("pre-computing linear dsig at %s points" % r.size)
             self.lin_dsig_ = self.lin.dsig(self.r_)
 
-    def fit(self, *, dsig, dsigcov, guess, more=False):
+    def fit(self, *, dsig, dsigcov, guess):
         """
         Class:
             NFWBiasFitter
@@ -57,14 +57,11 @@ class NFWBiasFitter(object):
             guess: [r200,c,B] or [r200,c] if withlin=False
 
         Outputs:
-            if more=False:
-                p,cov:  The parameters array and the covariance arra
-            if more=True:
-                a dict with  'p' and 'cov' along with
-                    r200,r200_err
-                    c, c_err
-                    B, B_err  (-9999 if withlin=False)
-                    m200, m200_err
+            a dict with  'p' and 'cov' along with
+                r200,r200_err
+                c, c_err
+                B, B_err  (-9999 if withlin=False)
+                m200, m200_err
             plus their errors
 
         """
@@ -95,16 +92,14 @@ class NFWBiasFitter(object):
             sigma=dsigcov,
             p0=guess,
         )
-        if not more:
-            return p, cov
-        else:
-            return self.pars2more(p, cov)
+        return self.pars2more(p, cov)
 
-    def dsig(self, r, r200, c, B):
+    def dsig(self, r, r200, c, B=None):
         """
         get delta sigma for the input data
         """
         if self.withlin:
+            assert B is not None, "send B for withlin"
             return self.nfw.dsig(r, r200, c) + self.lin_dsig(r, B)
         else:
             return self.nfw.dsig(r, r200, c)
@@ -144,16 +139,83 @@ class NFWBiasFitter(object):
         return res
 
 
+def plot(
+    *,
+    r,
+    z,
+    r200,
+    c,
+    B=None,
+    dsig=None,
+    dsigcov=None,
+    plt=None,
+    show=False,
+):
+
+    import hickory
+
+    rmin, rmax = r.min(), r.max()
+
+    if B is None:
+        withlin = False
+    else:
+        withlin = True
+
+    fitter = NFWBiasFitter(z=z, r=r, withlin=withlin)
+    yfit = fitter.dsig(r, r200, c, B=B)
+
+    if dsig is not None or dsigcov is not None:
+        assert dsigcov is not None, "send both dsig and dsigcov"
+        assert dsig is not None, "send both dsig and dsigcov"
+        dsigerr = np.diag(dsigcov)
+
+        ymin, ymax = [
+            0.5 * (dsig - dsigerr).min(),
+            1.5 * (dsig + dsigerr).max(),
+        ]
+    else:
+        ymin, ymax = [0.5 * yfit.min(), 1.5 * yfit.max()]
+
+    ylim = [0.5*ymin, 1.5*ymax]
+
+    if plt is None:
+        plt = hickory.Plot(
+            xlabel=r"$r$ [$h^{-1}$ Mpc]",
+            ylabel=r"$\Delta\Sigma ~ [h \mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+            xlim=[0.5 * rmin, 1.5 * rmax],
+            ylim=ylim,
+        )
+        plt.set_xscale('log')
+        plt.set_yscale('log')
+
+    if dsig is not None:
+        plt.errorbar(r, dsig, dsigerr)
+
+    plt.curve(r, yfit, label='model')
+    if withlin:
+        yfit_lin = fitter.lin_dsig(r, B)
+        yfit_nfw = fitter.nfw.dsig(r, r200, c)
+        plt.curve(r, yfit_nfw, label='nfw')
+        plt.curve(r, yfit_lin, label='linear')
+
+    plt.legend()
+
+    if show:
+        plt.show()
+
+    return plt
+
+
 def fit_nfw_lin_dsig(
     *,
     z, r, dsig, dsigcov, guess,
-    more=False, cosmo_pars=None, withlin=True,
+    cosmo_pars=None, withlin=True,
 ):
     """
     Name:
         fit_nfw_line_dsig
     Calling Sequence:
-        fit_nfw_lin_dsig(omega_m, z, r, ds, dscov, guess, more=False,
+        fit_nfw_lin_dsig(omega_m, z, r, ds, dscov, guess,
                          **kwds)
     Inputs:
         omega_m:
@@ -187,7 +249,7 @@ def fit_nfw_lin_dsig(
     """
 
     fitter = NFWBiasFitter(z=z, r=r, cosmo_pars=cosmo_pars, withlin=withlin)
-    return fitter.fit(dsig=dsig, dsigcov=dsigcov, guess=guess, more=more)
+    return fitter.fit(dsig=dsig, dsigcov=dsigcov, guess=guess)
 
 
 def fit_nfw_dsig(omega_m, z, r, ds, dserr, guess, rhofac=180):
@@ -258,8 +320,6 @@ def fit_nfw_dsig(omega_m, z, r, ds, dserr, guess, rhofac=180):
 
 def test_fit_nfw_lin_dsig(rmin=0.01):
 
-    import hickory
-
     z = 0.25
 
     r200 = 1.0
@@ -286,8 +346,7 @@ def test_fit_nfw_lin_dsig(rmin=0.01):
     res = fitter.fit(
         dsig=ds,
         dsigcov=dscov,
-        guess=guess
-        , more=True,
+        guess=guess,
     )
 
     r200_fit = res["r200"]
@@ -307,28 +366,39 @@ def test_fit_nfw_lin_dsig(rmin=0.01):
     print("Cov:")
     print(res["cov"])
 
-    rfine = 10.0 ** linspace(log_rmin, log_rmax, 100)
-    fitter2 = NFWBiasFitter(z=z, r=rfine)
-
-    yfit = fitter2.dsig(rfine, r200_fit, c_fit, B_fit)
-    yfit_nfw = fitter2.nfw.dsig(rfine, r200_fit, c_fit)
-    yfit_lin = fitter2.lin_dsig(rfine, B_fit)
-
-    plt = hickory.Plot(
-        xlabel=r"$r$ [$h^{-1}$ Mpc]",
-        ylabel=r"$\Delta\Sigma ~ [h \mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
-        xlim=[0.5 * rmin, 1.5 * rmax],
-        ylim=[0.5 * (ds - dserr).min(), 1.5 * (ds + dserr).max()]
+    plot(
+        r=r,
+        z=z,
+        r200=r200_fit,
+        c=c_fit,
+        B=B_fit,
+        dsig=ds,
+        dsigcov=dscov,
+        show=True,
     )
-    plt.set_xscale('log')
-    plt.set_yscale('log')
-    plt.errorbar(r, ds, dserr)
-
-    plt.curve(rfine, yfit, label='model')
-    plt.curve(rfine, yfit_nfw, label='nfw')
-    plt.curve(rfine, yfit_lin, label='linear')
-    plt.legend()
-    plt.show()
+    # rfine = 10.0 ** linspace(log_rmin, log_rmax, 100)
+    # fitter2 = NFWBiasFitter(z=z, r=rfine)
+    #
+    # yfit = fitter2.dsig(rfine, r200_fit, c_fit, B_fit)
+    # yfit_nfw = fitter2.nfw.dsig(rfine, r200_fit, c_fit)
+    # yfit_lin = fitter2.lin_dsig(rfine, B_fit)
+    #
+    # plt = hickory.Plot(
+    #     xlabel=r"$r$ [$h^{-1}$ Mpc]",
+    #     ylabel=r"$\Delta\Sigma ~ [h \mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+    #     xlim=[0.5 * rmin, 1.5 * rmax],
+    #     ylim=[0.5 * (ds - dserr).min(), 1.5 * (ds + dserr).max()]
+    # )
+    # plt.set_xscale('log')
+    # plt.set_yscale('log')
+    # plt.errorbar(r, ds, dserr)
+    #
+    # plt.curve(rfine, yfit, label='model')
+    # plt.curve(rfine, yfit_nfw, label='nfw')
+    # plt.curve(rfine, yfit_lin, label='linear')
+    # plt.legend()
+    # plt.show()
+    #
 
 
 def test_fit_nfw_dsig(rmin=0.01):
