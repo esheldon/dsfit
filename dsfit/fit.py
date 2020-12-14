@@ -39,10 +39,13 @@ class NFWBiasFitter(object):
 
         if self.withlin:
             self.lin = linear.Linear(cosmo_pars=cosmo_pars)
-            print("pre-computing linear dsig at %s points" % r.size)
+            # print("pre-computing linear dsig at %s points" % r.size)
             self.lin_dsig_ = self.lin.dsig(self.r_)
 
-    def fit(self, *, dsig, dsigcov, guess):
+    def fit(self, *, dsig, dsigcov, guess,
+            c_bounds=[0.1, 10.0],
+            r200_bounds=[0.1, 10.0],
+            B_bounds=[0.5, 3.0]):
         """
         Class:
             NFWBiasFitter
@@ -84,13 +87,21 @@ class NFWBiasFitter(object):
         if len(guess) != npar:
             raise ValueError("parameter guess must have %s elements" % npar)
 
-        print("running curve_fit")
+        # print("running curve_fit")
+        bounds = (
+            # np.array([0.05, 0.1, 0.1]),
+            # np.array([5.00, 5.0, 3.0])
+            np.array([r200_bounds[0], c_bounds[0], B_bounds[0]]),
+            np.array([r200_bounds[1], c_bounds[1], B_bounds[1]])
+        )
+        print('bounds:', bounds)
         p, cov = curve_fit(
             func,
             self.r_,
             dsig,
             sigma=dsigcov,
             p0=guess,
+            bounds=bounds,
         )
         return self.pars2more(p, cov)
 
@@ -110,6 +121,7 @@ class NFWBiasFitter(object):
         """
         if r.size != self.lin_dsig_.size:
             raise ValueError("r and dsig must be same size")
+
         return B * self.lin_dsig_
 
     def pars2more(self, p, cov):
@@ -148,13 +160,13 @@ def plot(
     B=None,
     dsig=None,
     dsigcov=None,
+    xlim=None,
+    ylim=None,
     plt=None,
     show=False,
 ):
 
     import hickory
-
-    rmin, rmax = r.min(), r.max()
 
     if B is None:
         withlin = False
@@ -167,29 +179,39 @@ def plot(
     if dsig is not None or dsigcov is not None:
         assert dsigcov is not None, "send both dsig and dsigcov"
         assert dsig is not None, "send both dsig and dsigcov"
-        dsigerr = np.diag(dsigcov)
+        dsigerr = np.sqrt(np.diag(dsigcov))
 
         ymin, ymax = [
             0.5 * (dsig - dsigerr).min(),
             1.5 * (dsig + dsigerr).max(),
         ]
+        if ymin < 0:
+            ymin = 0.1
     else:
         ymin, ymax = [0.5 * yfit.min(), 1.5 * yfit.max()]
 
-    ylim = [0.5*ymin, 1.5*ymax]
+    if ylim is None:
+        ylim = [0.5*ymin, 1.5*ymax]
+    if xlim is None:
+        rmin, rmax = r.min(), r.max()
+        xlim = [0.5 * rmin, 1.5 * rmax],
 
     if plt is None:
+        dolegend = True
         plt = hickory.Plot(
             xlabel=r"$r$ [$h^{-1}$ Mpc]",
             ylabel=r"$\Delta\Sigma ~ [h \mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
-            xlim=[0.5 * rmin, 1.5 * rmax],
+            xlim=xlim,
             ylim=ylim,
         )
         plt.set_xscale('log')
         plt.set_yscale('log')
+    else:
+        dolegend = False
 
+    alpha = 0.5
     if dsig is not None:
-        plt.errorbar(r, dsig, dsigerr)
+        plt.errorbar(r, dsig, dsigerr, alpha=alpha)
 
     plt.curve(r, yfit, label='model')
     if withlin:
@@ -198,7 +220,8 @@ def plot(
         plt.curve(r, yfit_nfw, label='nfw')
         plt.curve(r, yfit_lin, label='linear')
 
-    plt.legend()
+    if dolegend:
+        plt.legend()
 
     if show:
         plt.show()

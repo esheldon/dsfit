@@ -105,6 +105,10 @@ class NFW(object):
 
         """
 
+        # print('r200:', r200, 'c:', c)
+        # if r200 < 0 or c < 0:
+        #     return r*0 - 9999
+
         ep = self.ep
 
         rs = r200 / c
@@ -122,6 +126,7 @@ class NFW(object):
         if w1.size > 0:
             x = xx[w1]
             x2 = x ** 2
+            # print(x)
             A = arctanh(sqrt((1 - x) / (1 + x)))
             s = (
                 8 * A / (x2 * sqrt(1 - x2))

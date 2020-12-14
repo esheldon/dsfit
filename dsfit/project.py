@@ -21,8 +21,10 @@ lag_quad_poly(x,y):
 import numpy
 from numpy import int32, log, log10, arange, sqrt
 
+DEFAULT_POWER = -3.12
 
-def project3d(r, rho, extrapolate=True):
+
+def project3d(r, rho, extrapolate=True, power=DEFAULT_POWER):
     """
 
     Compute the 2D projection of points prepresenting a function of the
@@ -36,12 +38,23 @@ def project3d(r, rho, extrapolate=True):
     The last point is computed using a powerlaw extrapolation. You might
     want to just remove the last point if you don't trust this.
 
+    Parameters
+    ----------
+    r: array
+        Radius in Mpc
+    rho: array
+        profile to be projected
+    extrapolate: bool
+        Set True to extrapolate
+    power: float
+        power law index for projection.  Set to None to estimate from
+        the data (watch out this can fail).
     """
 
     nr = r.size
     if extrapolate:
         # extrapolate then recurse
-        r_ext, rho_ext = extrapolate_powerlaw(r, rho)
+        r_ext, rho_ext = extrapolate_powerlaw(r, rho, power=power)
         sig = project3d(r_ext, rho_ext, extrapolate=False)
         sig = sig[0:nr]
         return sig
@@ -89,7 +102,7 @@ def getI(RR, RR2, A, B, p):
     return I0, I1, I2
 
 
-def extrapolate_powerlaw(r, rho):
+def extrapolate_powerlaw(r, rho, power=DEFAULT_POWER):
     nr = r.size
     # extrapolate for the integral, but then trim back
 
@@ -107,9 +120,11 @@ def extrapolate_powerlaw(r, rho):
     grid = 1 + arange(n_ext, dtype="f8")
     r_ext = rmax * 10.0 ** (Lext * grid / (n_ext - 1))
 
-    al = log(rho[nr - 1] / rho[nr - 2]) / log(r[nr - 1] / r[nr - 2])
-    A = rho[nr - 1] / (r[nr - 1] ** al)
-    rho_ext = A * r_ext ** al
+    if power is None:
+        power = log(rho[nr - 1] / rho[nr - 2]) / log(r[nr - 1] / r[nr - 2])
+
+    A = rho[nr - 1] / (r[nr - 1] ** power)
+    rho_ext = A * r_ext ** power
 
     r_ext = numpy.concatenate((r, r_ext))
     rho_ext = numpy.concatenate((rho, rho_ext))
