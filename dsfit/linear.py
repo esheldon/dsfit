@@ -585,7 +585,9 @@ class Linear(object):
         """
 
         # slopes
-        al = log(sig / roll(sig, 1)) / log(r / roll(r, 1))
+        sigfix = sig.clip(min=1.0e-5)
+        # al = log(sig / roll(sig, 1)) / log(r / roll(r, 1))
+        al = log(sigfix / roll(sigfix, 1)) / log(r / roll(r, 1))
         al[0] = al[1]
         slope_min = -1.95
         if al[0] < slope_min:

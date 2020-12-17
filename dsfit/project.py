@@ -18,7 +18,7 @@ lag_quad_poly(x,y):
     Computes the uniq quadratic poly through three x,y points
 
 """
-import numpy
+import numpy as np
 from numpy import int32, log, log10, arange, sqrt
 
 DEFAULT_POWER = -3.12
@@ -59,12 +59,12 @@ def project3d(r, rho, extrapolate=True, power=DEFAULT_POWER):
         sig = sig[0:nr]
         return sig
 
-    sig = numpy.zeros(nr, dtype="f8")
+    sig = np.zeros(nr, dtype="f8")
     for j in range(nr - 2):
         RR = r[j]
         RR2 = RR ** 2
         num = nr - j
-        Int = numpy.zeros(num, dtype="f8")
+        Int = np.zeros(num, dtype="f8")
 
         for i in range(num - 2):
             x = r[i + j: i + j + 3]
@@ -126,8 +126,8 @@ def extrapolate_powerlaw(r, rho, power=DEFAULT_POWER):
     A = rho[nr - 1] / (r[nr - 1] ** power)
     rho_ext = A * r_ext ** power
 
-    r_ext = numpy.concatenate((r, r_ext))
-    rho_ext = numpy.concatenate((rho, rho_ext))
+    r_ext = np.concatenate((r, r_ext))
+    rho_ext = np.concatenate((rho, rho_ext))
 
     return r_ext, rho_ext
 
@@ -156,8 +156,8 @@ def lag_quad_poly(x, y):
     if x.size != 3 or y.size != 3:
         raise ValueError("x,y must be length 3")
 
-    q = numpy.zeros(3, dtype="f8")
-    p = numpy.zeros(3, dtype="f8")
+    q = np.zeros(3, dtype="f8")
+    p = np.zeros(3, dtype="f8")
 
     q[0] = y[0] / ((x[0] - x[1]) * (x[0] - x[2]))
     q[1] = y[1] / ((x[1] - x[0]) * (x[1] - x[2]))
