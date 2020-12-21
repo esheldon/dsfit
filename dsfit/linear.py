@@ -60,8 +60,9 @@ class Linear(object):
             rho_matter(z) * xi
         """
 
-        xi = self.get_xi(r)
-        return self.rhomean * xi * self.b
+        result = self.get_xi(r)
+        result *= self.rhomean
+        return result
 
     def get_xi(self, r):
         """
@@ -79,7 +80,9 @@ class Linear(object):
         xi: array
             xi values at the requested radii
         """
-        return self.cosmo.correlationFunction(r, self.z)
+        xi = self.cosmo.correlationFunction(r, self.z)
+        xi *= self.b
+        return xi
 
     def get_j3(self, r):
         """
