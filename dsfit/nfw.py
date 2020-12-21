@@ -1,4 +1,5 @@
 import numpy as np
+from .util import m200_to_r200
 
 
 class NFW(object):
@@ -10,27 +11,30 @@ class NFW(object):
     on construction.
     """
 
-    def __init__(self, *, cosmo):
+    def __init__(self, *, cosmo, z, m200, c):
         self.cosmo = cosmo
+
+        self.z = z
+        self.c = c
+
+        # convert to Mpc^3
+        self.rhomean = self.cosmo.rho_m(self.z) * 1000.0**3
+
+        self.m200 = m200
+        self.r200 = m200_to_r200(m200=m200, rho=self.rhomean)
 
         # buffer region around rs, linearly interpolate through
         # region near rs
         self.ep = 0.001
 
-    def dsig(self, *, z, r, r200, c):
+    def get_dsig(self, r):
         """
         Get DeltaSigma in units of Msolar/pc^2
 
         Parameters
         ----------
-        z: float
-            Redshift at which to evaluate
         r: array
             radii in Mpc
-        r200: array
-            r200 mean in Mpc
-        c: float
-            concentration
 
         Returns
         -------
@@ -39,21 +43,16 @@ class NFW(object):
         """
         from numpy import log, arctan, arctanh, sqrt
 
-        # convert to Mpc^2
-        rhomean = self.cosmo.rho_m(z) * 1000.0**3
-
-        # print('r200:', r200, 'c:', c)
-        # if r200 < 0 or c < 0:
-        #     return r*0 - 9999
-
         ep = self.ep
 
-        rs = r200 / c
+        c = self.c
+
+        rs = self.r200 / c
         xx = r / rs  # = c*r/r200
         del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
 
         # fac = rs * del_c * self.rhocrit
-        fac = rs * del_c * rhomean
+        fac = rs * del_c * self.rhomean
 
         w1, = np.where(xx < (1 - ep))
         w2, = np.where((xx >= (1 - ep)) & (xx <= (1 + ep)))
@@ -123,102 +122,72 @@ class NFW(object):
         # convert to Msolar/pc^2
         return dsig / 1.e6**2
 
-    def rho(self, *, z, r, r200, c):
+    def get_rho(self, r):
         from numpy import log
 
-        rhomean = self.cosmo.rho_m(z)
+        c = self.c
 
         del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
-        rs = r200 / c
+        rs = self.r200 / c
         x = r / rs
 
         # rho = del_c * self.rhocrit / x / (1 + x) ** 2
-        rho = del_c * rhomean / x / (1 + x) ** 2
+        rho = del_c * self.rhomean / x / (1 + x) ** 2
         return rho
 
-    def plot_rho(self, *, z, r200, c):
-        from biggles import FramedPlot, Curve
-
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        rho = self.rho(z=z, r=r, r200=r200, c=c)
-
-        plt = FramedPlot()
-        plt.add(Curve(r, rho))
-        plt.xlog = True
-        plt.ylog = True
-
-        plt.show()
-
-    def m(self, *, z, r, r200, c):
+    def get_mass(self, r):
         """
         Mass less than radius r in solar masses
         r and r200 in Mpc.
         """
         from numpy import log
-        rhomean = self.cosmo.rho_m(z)
+
+        c = self.c
 
         del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
-        rs = r200 / c
+        rs = self.r200 / c
         x = r / rs
+
+        rhomean = self.rhomean
 
         m = 4 * np.pi * del_c * rhomean * rs ** 3 * (log(1 + x) - x / (1 + x))  # noqa
         return m * 1.0e12
 
-    def m200(self, *, z, r200):
-        """
+    def plot_rho(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
 
-        Gives mass in solar masses for r200 in Mpc
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        rho = self.get_rho(r)
 
-        Same as puttin r=r200 in the .m() method
-        Note independent of c
-
-        """
-
-        # Msolar/kpc^3
-        rhomean = self.cosmo.rho_m(z)
-
-        # convert to Mpc^3
-        rhomean = rhomean * 1000.0**3
-
-        m200 = 200 * rhomean * (4.0 / 3.0) * np.pi * r200 ** 3
-        return m200
-
-    def r200(self, *, z, m200):
-
-        # Msolar/kpc^3
-        rhomean = self.cosmo.rho_m(z)
-
-        # convert to Mpc^3
-        rhomean = rhomean * 1000.0**3
-
-        power = 1.0/3.0
-        return (m200/200/rhomean/np.pi/(4.0 / 3.0))**power
-
-    def plot_m(self, *, z, r200, c):
-        from biggles import FramedPlot, Curve
-
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        m = self.m(z=z, r=r, r200=r200, c=c)
-
-        plt = FramedPlot()
-        plt.add(Curve(r, m))
-        plt.xlog = True
-        plt.ylog = True
+        plt = hickory.Plot()
+        plt.curve(r, rho)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
 
         plt.show()
 
-    def plot_dsig(self, *, z, r200, c):
-        from biggles import FramedPlot, Curve
+    def plot_m(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
 
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        ds = self.dsig(z=z, r200=r200, c=c)
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        mass = self.get_mass(r)
 
-        plt = FramedPlot()
-        plt.add(Curve(r, ds))
-        plt.xlog = True
-        plt.ylog = True
+        plt = hickory.Plot()
+        plt.curve(r, mass)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
+
+        plt.show()
+
+    def plot_dsig(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
+
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        dsig = self.get_dsig(r)
+
+        plt = hickory.Plot()
+        plt.curve(r, dsig)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
 
         plt.show()

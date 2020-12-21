@@ -1,10 +1,11 @@
 import numpy as np
 from . import nfw
 from . import linear
+from .cosmo import get_cosmo
 from colossus.cosmology.cosmology import (
     Cosmology,
-    setCosmology,
 )
+from .concentration import get_conc
 
 
 class NFWBiasFitter(object):
@@ -33,7 +34,7 @@ class NFWBiasFitter(object):
         """
 
         if not isinstance(cosmo, Cosmology):
-            cosmo = setCosmology(cosmo)
+            cosmo = get_cosmo(cosmo)
 
         self.z = z
         self.r_ = r.copy()
@@ -41,16 +42,13 @@ class NFWBiasFitter(object):
 
         self.withlin = withlin
 
-        self.nfw = nfw.NFW(cosmo=self.cosmo)
-
         if self.withlin:
-            self.lin = linear.Linear(cosmo=cosmo)
+            self.lin = linear.Linear(cosmo=cosmo, z=z, b=1)
             # print("pre-computing linear dsig at %s points" % r.size)
-            self.lin_dsig_ = self.lin.dsig(z=z, r=self.r_, b=1.0)
+            self.lin_dsig_ = self.lin.get_dsig(self.r_)
 
     def fit(self, *, dsig, dsigcov, guess,
-            c_bounds=[0.1, 10.0],
-            r200_bounds=[0.1, 10.0],
+            lm200_bounds=[11, 15],
             b_bounds=[0.2, 3.0]):
         """
         Class:
@@ -63,14 +61,13 @@ class NFWBiasFitter(object):
         Inputs:
             dsig, dsigcov: Must correspond to the radii given
                 on construction.
-            guess: [r200, c, b] or [r200, c] if withlin=False
+            guess: [log10(m200), b] or [log10(m200)] if withlin=False
 
         Outputs:
             a dict with  'p' and 'cov' along with
-                r200,r200_err
+                lm200, lm200_err (which are  actually for log10(m200))
                 c, c_err
                 b, b_err  (-9999 if withlin=False)
-                m200, m200_err
             plus their errors
 
         """
@@ -84,11 +81,13 @@ class NFWBiasFitter(object):
             raise ValueError("dsig, dsigcov must be same size as r")
 
         if self.withlin:
-            npar = 3
-            func = self._dsig_nfw_lin
-        else:
-            func = self._dsig_nfw
+            # lm200, b
             npar = 2
+            func = self._get_dsig_nfw_lin
+        else:
+            # lm200
+            func = self._get_dsig_nfw
+            npar = 1
 
         if len(guess) != npar:
             raise ValueError("parameter guess must have %s elements" % npar)
@@ -97,10 +96,10 @@ class NFWBiasFitter(object):
         bounds = (
             # np.array([0.05, 0.1, 0.1]),
             # np.array([5.00, 5.0, 3.0])
-            np.array([r200_bounds[0], c_bounds[0], b_bounds[0]]),
-            np.array([r200_bounds[1], c_bounds[1], b_bounds[1]])
+            np.array([lm200_bounds[0], b_bounds[0]]),
+            np.array([lm200_bounds[1], b_bounds[1]])
         )
-        print('bounds:', bounds)
+
         p, cov = curve_fit(
             func,
             self.r_,
@@ -111,20 +110,22 @@ class NFWBiasFitter(object):
         )
         return self.pars2more(p, cov)
 
-    def _dsig_nfw(self, r, r200, c):
+    def _get_dsig_nfw(self, r, lm200):
         """
         for fitting, accepts non-keywords pars
         """
-        return self.nfw_dsig(r=r, r200=r200, c=c)
+        m200 = 10.0**lm200
+        return self.get_nfw_dsig(r=r, m200=m200)
 
-    def _dsig_nfw_lin(self, r, r200, c, b):
+    def _get_dsig_nfw_lin(self, r, lm200, b):
         """
         for fitting, accepts non-keywords pars
         """
         assert self.withlin
-        return self.dsig(r=r, r200=r200, c=c, b=b)
+        m200 = 10.0**lm200
+        return self.get_dsig(r=r, m200=m200, b=b)
 
-    def dsig(self, *, r, r200, c, b=None):
+    def get_dsig(self, *, r, m200=None, lm200=None, b=None):
         """
         get delta sigma for the input data
 
@@ -132,17 +133,29 @@ class NFWBiasFitter(object):
         """
         if self.withlin:
             assert b is not None, "send b for withlin"
-            nfw_dsig = self.nfw_dsig(r=r, r200=r200, c=c)
-            lin_dsig = self.lin_dsig(r=r, b=b)
+            nfw_dsig = self.get_nfw_dsig(r=r, m200=m200, lm200=lm200)
+            lin_dsig = self.get_lin_dsig(r=r, b=b)
             return nfw_dsig + lin_dsig
 
         else:
-            return self.nfw_dsig(r=r, r200=r200, c=c)
+            return self.get_nfw_dsig(r=r, m200=m200)
 
-    def nfw_dsig(self, *, r, r200, c):
-        return self.nfw.dsig(z=self.z, r=r, r200=r200, c=c)
+    def get_nfw_dsig(self, *, r, m200=None, lm200=None):
+        if lm200 is not None:
+            m200 = 10.0**lm200
+        elif m200 is None:
+            raise ValueError('send either m200= or lm200=')
 
-    def lin_dsig(self, *, r, b):
+        c, _ = get_conc(cosmo=self.cosmo, z=self.z, M=m200)
+        tnfw = nfw.NFW(
+            cosmo=self.cosmo,
+            z=self.z,
+            m200=m200,
+            c=c,
+        )
+        return tnfw.get_dsig(r)
+
+    def get_lin_dsig(self, *, r, b):
         """
         r values must coinciced with linear dsig values
         """
@@ -152,28 +165,23 @@ class NFWBiasFitter(object):
         return b * self.lin_dsig_
 
     def pars2more(self, p, cov):
-        r200 = p[0]
-        r200_err = np.sqrt(cov[0, 0])
-        c = p[1]
-        c_err = np.sqrt(cov[1, 1])
-
-        m200 = self.nfw.m200(z=self.z, r200=r200)
-        m200_err = 3 * m200 * r200_err / r200
+        lm200 = p[0]
+        lm200_err = np.sqrt(cov[0, 0])
+        m200 = 10.0**lm200
+        c, _ = get_conc(cosmo=self.cosmo, z=self.z, M=m200)
 
         res = {
             "p": p,
             "cov": cov,
-            "r200": r200,
-            "r200_err": r200_err,
             "c": c,
-            "c_err": c_err,
+            "lm200": lm200,
+            "lm200_err": lm200_err,
             "m200": m200,
-            "m200_err": m200_err,
         }
 
         if self.withlin:
-            res["b"] = p[2]
-            res["b_err"] = np.sqrt(cov[2, 2])
+            res["b"] = p[1]
+            res["b_err"] = np.sqrt(cov[1, 1])
 
         return res
 
@@ -182,8 +190,8 @@ def plot(
     *,
     r,
     z,
-    r200,
-    c,
+    m200=None,
+    lm200=None,
     b=None,
     dsig=None,
     dsigcov=None,
@@ -201,11 +209,7 @@ def plot(
         withlin = True
 
     fitter = NFWBiasFitter(z=z, r=r, withlin=withlin)
-    nfw_dsig = fitter.nfw_dsig(r=r, r200=r200, c=c)
-    print('nfw m200: %e' % fitter.nfw.m200(z=0.3, r200=0.2))
-    print('nfw:', nfw_dsig)
-    yfit = fitter.dsig(r=r, r200=r200, c=c, b=b)
-    print('yfit:', yfit)
+    yfit = fitter.get_dsig(r=r, m200=m200, lm200=lm200, b=b)
 
     if dsig is not None or dsigcov is not None:
         assert dsigcov is not None, "send both dsig and dsigcov"
@@ -247,8 +251,8 @@ def plot(
 
     plt.curve(r, yfit, label='model')
     if withlin:
-        yfit_lin = fitter.lin_dsig(r=r, b=b)
-        yfit_nfw = fitter.nfw_dsig(r=r, r200=r200, c=c)
+        yfit_lin = fitter.get_lin_dsig(r=r, b=b)
+        yfit_nfw = fitter.get_nfw_dsig(r=r, m200=m200, lm200=lm200)
         plt.curve(r, yfit_nfw, label='nfw')
         plt.curve(r, yfit_lin, label='linear')
 
@@ -264,7 +268,7 @@ def plot(
 def fit_nfw_lin_dsig(
     *,
     z, r, dsig, dsigcov, guess,
-    cosmo_pars=None, withlin=True,
+    cosmo='planck18', withlin=True,
 ):
     """
     Name:
@@ -278,7 +282,7 @@ def fit_nfw_lin_dsig(
         r: radius in Mpc
         ds: delta sigma in pc^2/Msun
         dscov: cov matrix
-        guess: guesses for [r200,c,b]
+        guess: guesses for [log10(m200),c,b]
 
     Keywords:
         withlin: True.  Include the linear bias term.
@@ -295,107 +299,37 @@ def fit_nfw_lin_dsig(
             p,cov:  The parameters array and the covariance arra
         if more=True:
             a dict with  'p' and 'cov' along with
-                r200,r200_err
-                c, c_err
+                lm200, lm200_err
                 b, b_err
-                m200, m200_err
-        plus their errors
-
+                c,
     """
 
-    fitter = NFWBiasFitter(z=z, r=r, cosmo_pars=cosmo_pars, withlin=withlin)
+    fitter = NFWBiasFitter(z=z, r=r, cosmo=cosmo, withlin=withlin)
     return fitter.fit(dsig=dsig, dsigcov=dsigcov, guess=guess)
-
-
-def fit_nfw_dsig(omega_m, z, r, ds, dserr, guess, rhofac=180):
-    """
-    Name:
-        fit_nfw_dsig
-    Calling Sequence:
-        fit_nfw_dsig(omega_m, z, r, ds, dserr, guess)
-    Inputs:
-        omega_m:
-        z: the redshift
-        r: radius in Mpc
-        ds: delta sigma in pc^2/Msun
-        dserr: error
-        guess: guesses for [r200,c]
-
-        rhofac=180 for calculation mass relative to
-            rhofac times mean
-
-    Outputs:
-        This returns a dict with:
-
-            r200
-            c
-            m200
-
-        plus errors and a covariance between r200 and c
-
-        A mass relative to rhofac*rhmean is also computed.
-
-    """
-    from scipy.optimize import curve_fit
-
-    n = nfw.NFW(omega_m, z)
-    p, cov = curve_fit(n.dsig, r, ds, sigma=dserr, p0=guess)
-    r200 = p[0]
-    r200_err = np.sqrt(cov[0, 0])
-    c = p[1]
-    c_err = np.sqrt(cov[1, 1])
-
-    m200 = n.m200(r200)
-    m200_err = 3 * m200 * r200_err / r200
-
-    # get rhofac times mean
-    rm = n.r_fmean(r200, c, rhofac)
-    rm_err = r200_err * (rm / r200)
-    mm = n.m(rm, r200, c)
-    mm_err = m200_err * (mm / m200)
-
-    rtag = "r%sm" % rhofac
-    mtag = "m%sm" % rhofac
-
-    res = {
-        "r200": r200,
-        "r200_err": r200_err,
-        "c": c,
-        "c_err": c_err,
-        "cov": cov,
-        "m200": m200,
-        "m200_err": m200_err,
-        rtag: rm,
-        rtag + "_err": rm_err,
-        mtag: mm,
-        mtag + "_err": mm_err,
-    }
-    return res
 
 
 def test_fit_nfw_lin_dsig(rmin=0.01):
 
+    cosmo = get_cosmo('planck18')
     z = 0.25
 
-    r200 = 1.0
-    c = 5.0
-    b = 10.0
+    lm200 = 12.5
+    b = 2.0
 
-    rmax = 50.0
     log_rmin = np.log10(rmin)
-    log_rmax = np.log10(rmax)
+    log_rmax = np.log10(50.0)
     npts = 30
-    r = 10.0 ** np.linspace(log_rmin, log_rmax, npts)
+    r = np.logspace(log_rmin, log_rmax, npts)
 
-    fitter = NFWBiasFitter(z=z, r=r)
-    ds = fitter.dsig(r, r200, c, b)
+    fitter = NFWBiasFitter(cosmo=cosmo, z=z, r=r)
+    ds = fitter.get_dsig(r=r, lm200=lm200, b=b)
+
     # 10% errors
     dserr = 0.1 * ds
     ds += dserr * np.random.standard_normal(ds.size)
     dscov = np.diag(dserr)
 
-    guess = np.array([r200, c, b], dtype="f8")
-    # add 10% error to the guess
+    guess = np.array([lm200, b], dtype="f8")
     guess += 0.1 * guess * np.random.standard_normal(guess.size)
 
     res = fitter.fit(
@@ -404,93 +338,25 @@ def test_fit_nfw_lin_dsig(rmin=0.01):
         guess=guess,
     )
 
-    r200_fit = res["r200"]
-    r200_err = res["r200_err"]
-    c_fit = res["c"]
-    c_err = res["c_err"]
+    lm200_fit = res["lm200"]
+    lm200_err = res["lm200_err"]
     b_fit = res["b"]
     b_err = res["b_err"]
 
     print("Truth:")
-    print("    r200: %f" % r200)
-    print("       c: %f" % c)
-    print("       b: %f" % b)
-    print("r200_fit: %f +/- %f" % (r200_fit, r200_err))
-    print("   c_fit: %f +/- %f" % (c_fit, c_err))
-    print("   b_fit: %f +/- %f" % (b_fit, b_err))
+    print("    lm200: %f" % lm200)
+    print("        b: %f" % b)
+    print("lm200_fit: %f +/- %f" % (lm200_fit, lm200_err))
+    print("    b_fit: %f +/- %f" % (b_fit, b_err))
     print("Cov:")
     print(res["cov"])
 
     plot(
         r=r,
         z=z,
-        r200=r200_fit,
-        c=c_fit,
+        lm200=lm200_fit,
         b=b_fit,
         dsig=ds,
         dsigcov=dscov,
         show=True,
     )
-
-
-def test_fit_nfw_dsig(rmin=0.01):
-
-    from biggles import FramedPlot, Points, SymmetricErrorBarsY, Curve
-
-    omega_m = 0.25
-    z = 0.25
-    n = nfw.NFW(omega_m, z)
-
-    r200 = 1.0
-    c = 5.0
-
-    rmax = 5.0
-    log_rmin = np.log10(rmin)
-    log_rmax = np.log10(rmax)
-    npts = 25
-    logr = np.linspace(log_rmin, log_rmax, npts)
-    r = 10.0 ** logr
-
-    ds = n.dsig(r, r200, c)
-    # 10% errors
-    dserr = 0.1 * ds
-    ds += dserr * np.random.standard_normal(ds.size)
-
-    guess = np.array([r200, c], dtype="f8")
-    # add 10% error to the guess
-    guess += 0.1 * guess * np.random.standard_normal(guess.size)
-
-    res = fit_nfw_dsig(omega_m, z, r, ds, dserr, guess)
-
-    r200_fit = res["r200"]
-    r200_err = res["r200_err"]
-
-    c_fit = res["c"]
-    c_err = res["c_err"]
-
-    print("Truth:")
-    print("    r200: %f" % r200)
-    print("       c: %f" % c)
-    print("r200_fit: %f +/- %f" % (r200_fit, r200_err))
-    print("   c_fit: %f +/- %f" % (c_fit, c_err))
-    print("Cov:")
-    print(res["cov"])
-
-    logr = np.linspace(log_rmin, log_rmax, 1000)
-    rlots = 10.0 ** logr
-    yfit = n.dsig(rlots, r200_fit, c_fit)
-
-    plt = FramedPlot()
-    plt.add(Points(r, ds, type="filled circle"))
-    plt.add(SymmetricErrorBarsY(r, ds, dserr))
-    plt.add(Curve(rlots, yfit, color="blue"))
-
-    plt.xlabel = r"$r$ [$h^{-1}$ Mpc]"
-    plt.ylabel = r"$\Delta\Sigma ~ [M_{sun} pc^{-2}]$"
-
-    plt.xrange = [0.5 * rmin, 1.5 * rmax]
-    plt.yrange = [0.5 * (ds - dserr).min(), 1.5 * (ds + dserr).max()]
-
-    plt.xlog = True
-    plt.ylog = True
-    plt.show()

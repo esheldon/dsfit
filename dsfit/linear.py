@@ -7,10 +7,15 @@ class Linear(object):
     Compute delta_sigma(r) for the linear correlation function
     """
 
-    def __init__(self, *, cosmo):
+    def __init__(self, *, cosmo, z, b):
         self.cosmo = cosmo
+        self.z = z
+        self.b = b
 
-    def dsig(self, *, z, r, b=1):
+        # convert to Mpc^3
+        self.rhomean = self.cosmo.rho_m(self.z) * 1000.0**3
+
+    def get_dsig(self, r):
         """
         Get DeltaSigma in units of Msolar/pc^2
 
@@ -29,14 +34,14 @@ class Linear(object):
             Same shape as r
         """
 
-        drho = self.drho(z=z, r=r, b=b)
+        drho = self.get_drho(r)
 
         sig = project.project3d(r, drho)
         dsig = self.sigma2dsig(r=r, sig=sig)
 
         return dsig
 
-    def drho(self, *, z, r, b=1):
+    def get_drho(self, r):
         """
         calculate rho_matter(z) * xi
 
@@ -55,12 +60,10 @@ class Linear(object):
             rho_matter(z) * xi
         """
 
-        xi = self.xi(z=z, r=r)
-        # convert to Mpc^2
-        rhomean = self.cosmo.rho_m(z) * 1000.0**3
-        return rhomean * xi * b
+        xi = self.get_xi(r)
+        return self.rhomean * xi * self.b
 
-    def xi(self, *, z, r):
+    def get_xi(self, r):
         """
         Calculate the linear matter-matter correlation function
 
@@ -76,9 +79,9 @@ class Linear(object):
         xi: array
             xi values at the requested radii
         """
-        return self.cosmo.correlationFunction(r, z)
+        return self.cosmo.correlationFunction(r, self.z)
 
-    def j3(self, *, z, r):
+    def get_j3(self, r):
         """
         This is proportional to the mass enclosed.  Mass in units
         of 10^12 is then rhomean * j3 * 1.0e12
@@ -97,7 +100,7 @@ class Linear(object):
         """
         from numpy import log, roll
 
-        xi = self.xi(z=z, r=r)
+        xi = self.xi(r)
 
         w, = np.where(xi <= 0)
         if w.size > 0:
@@ -122,7 +125,7 @@ class Linear(object):
         j3 = 4 * np.pi * int0.cumsum()
         return j3
 
-    def m(self, *, z, r, b=1.0):
+    def m(self, r):
         """
         The mass enclosed.
 
@@ -137,14 +140,12 @@ class Linear(object):
 
         Returns
         -------
-        j3: array
+        mass: array
             same size as r
         """
 
-        j3 = self.j3(z=z, r=r)
-        rhomean = self.cosmo.rho_m(z)
-
-        return j3 * rhomean * b * 1.0e12
+        j3 = self.get_j3(r)
+        return j3 * self.rhomean * self.b * 1.0e3
 
     def sigma2dsig(self, *, r, sig):
         """
@@ -180,28 +181,30 @@ class Linear(object):
         # convert to Msolar/pc^2
         return dsig / 1.e6**2
 
-    def xigen(self, log_rmin, log_rmax, npts=1000):
+    def xigen(self, rmin=0.01, rmax=50.0, npts=1000):
         """
         Generate some xi values on log spaced grid
         """
-        r = 10.0 ** np.linspace(log_rmin, log_rmax, npts)
-        return r, self.xi(r)
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        return r, self.get_xi(r)
 
     def plot_xi(self, r, xi):
-        from biggles import FramedPlot, Curve
+        import hickory
 
         minval = 1.0e-4
 
         xi = np.where(xi < minval, minval, xi)
 
-        plt = FramedPlot()
-        plt.add(Curve(r, xi))
-        plt.xlog = True
-        plt.ylog = True
+        plt = hickory.Plot()
+        plt.set(
+            xlabel=r"$r [Mpc/h]$",
+            ylabel=r"$\xi_{lin}(r)$",
+        )
 
-        plt.xlabel = r"$r [Mpc/h]$"
-        plt.ylabel = r"$\xi_{lin}(r)$"
-        plt.aspect_ratio = 1
+        plt.set_xscale('log')
+        plt.set_yscale('log')
+        plt.curve(r, xi)
+
         plt.show()
 
     def plot_xigen(self):
