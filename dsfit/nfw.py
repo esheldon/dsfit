@@ -184,6 +184,17 @@ class NFW(object):
         m200 = 200 * rhomean * (4.0 / 3.0) * np.pi * r200 ** 3
         return m200
 
+    def r200(self, *, z, m200):
+
+        # Msolar/kpc^3
+        rhomean = self.cosmo.rho_m(z)
+
+        # convert to Mpc^3
+        rhomean = rhomean * 1000.0**3
+
+        power = 1.0/3.0
+        return (m200/200/rhomean/np.pi/(4.0 / 3.0))**power
+
     def plot_m(self, *, z, r200, c):
         from biggles import FramedPlot, Curve
 
