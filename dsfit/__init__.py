@@ -5,5 +5,6 @@ from .fit import NFWBiasFitter
 from . import nfw
 from . import linear
 from . import project
-from . import cosmopars
-from .cosmopars import get_cosmo_pars
+from . import cosmo
+from .cosmo import get_cosmo
+from . import util

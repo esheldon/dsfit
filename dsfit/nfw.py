@@ -1,5 +1,5 @@
 import numpy as np
-from numpy import log, arctan, arctanh, sqrt, pi as PI
+from .util import m200_to_r200
 
 
 class NFW(object):
@@ -11,111 +11,48 @@ class NFW(object):
     on construction.
     """
 
-    def __init__(self, *, cosmo_pars, z):
-        self.cosmo_pars = cosmo_pars
+    def __init__(self, *, cosmo, z, m200, c):
+        self.cosmo = cosmo
+
         self.z = z
+        self.c = c
 
-        # this is E(z) for flat universe
-        omega_m = cosmo_pars['omega_m']
+        # convert to Mpc^3
+        self.rhomean = self.cosmo.rho_m(self.z) * 1000.0**3
 
-        Ez = omega_m * (1 + z) ** 3 + (1.0 - omega_m)
-
-        self.Ez = Ez
-        self.rhocrit = 0.277520 * Ez
-        self.rho0 = omega_m * self.rhocrit
+        self.m200 = m200
+        self.r200 = m200_to_r200(m200=m200, rho=self.rhomean)
 
         # buffer region around rs, linearly interpolate through
         # region near rs
         self.ep = 0.001
 
-    def rho(self, r, r200, c):
-        del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
-        rs = r200 / c
-        x = r / rs
-
-        rho = del_c * self.rhocrit / x / (1 + x) ** 2
-        return rho
-
-    def plot_rho(self, r200, c):
-        from biggles import FramedPlot, Curve
-
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        rho = self.rho(r, r200, c)
-
-        plt = FramedPlot()
-        plt.add(Curve(r, rho))
-        plt.xlog = True
-        plt.ylog = True
-
-        plt.show()
-
-    def m(self, r, r200, c):
+    def get_dsig(self, r):
         """
-        Mass less than radius r in solar masses
-        r and r200 in Mpc.
+        Get DeltaSigma in units of Msolar/pc^2
+
+        Parameters
+        ----------
+        r: array
+            radii in Mpc
+
+        Returns
+        -------
+        DeltaSigma: array
+            Same shape as r
         """
-        del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
-        rs = r200 / c
-        x = r / rs
-
-        m = 4 * PI * del_c * self.rhocrit * rs ** 3 * (log(1 + x) - x / (1 + x))  # noqa
-        return m * 1.0e12
-
-    def rhomean(self, r, r200, c):
-        """
-        Mean density within radius r for the given NFW parameters
-        """
-        v = 4.0 / 3.0 * PI * r ** 3
-        return self.m(r, r200, c) / v
-
-    def m200(self, r200):
-        """
-
-        Gives mass in solar masses for r200 in Mpc
-
-        Same as puttin r=r200 in the .m() method
-        Note independent of c
-
-        """
-        m200 = 200 * self.rhocrit * (4.0 / 3.0) * PI * r200 ** 3
-        return m200 * 1.0e12
-
-    def plot_m(self, r200, c):
-        from biggles import FramedPlot, Curve
-
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        m = self.m(r, r200, c)
-
-        plt = FramedPlot()
-        plt.add(Curve(r, m))
-        plt.xlog = True
-        plt.ylog = True
-
-        plt.show()
-
-    def dsig(self, r, r200, c):
-        """
-
-        The results here are exactly the same as Dave's
-        r in Mpc
-        pars[0] = r200 in Mpc
-        pars[1] = concentration
-
-        """
-
-        # print('r200:', r200, 'c:', c)
-        # if r200 < 0 or c < 0:
-        #     return r*0 - 9999
+        from numpy import log, arctan, arctanh, sqrt
 
         ep = self.ep
 
-        rs = r200 / c
+        c = self.c
+
+        rs = self.r200 / c
         xx = r / rs  # = c*r/r200
         del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
 
-        fac = rs * del_c * self.rhocrit
+        # fac = rs * del_c * self.rhocrit
+        fac = rs * del_c * self.rhomean
 
         w1, = np.where(xx < (1 - ep))
         w2, = np.where((xx >= (1 - ep)) & (xx <= (1 + ep)))
@@ -179,76 +116,78 @@ class NFW(object):
                 + 4 * A / ((x2 - 1) ** (3 / 2.0))
             )
             dsig[w3] = s
+
         dsig *= fac
 
-        return dsig
+        # convert to Msolar/pc^2
+        return dsig / 1.e6**2
 
-    def plot_dsig(self, r200, c):
-        from biggles import FramedPlot, Curve
+    def get_rho(self, r):
+        from numpy import log
 
-        n = 1000
-        r = np.linspace(0.01, 20.0, n)
-        ds = self.dsig(r, r200, c)
+        c = self.c
 
-        plt = FramedPlot()
-        plt.add(Curve(r, ds))
-        plt.xlog = True
-        plt.ylog = True
+        del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
+        rs = self.r200 / c
+        x = r / rs
+
+        # rho = del_c * self.rhocrit / x / (1 + x) ** 2
+        rho = del_c * self.rhomean / x / (1 + x) ** 2
+        return rho
+
+    def get_mass(self, r):
+        """
+        Mass less than radius r in solar masses
+        r and r200 in Mpc.
+        """
+        from numpy import log
+
+        c = self.c
+
+        del_c = (200 / 3.0) * c ** 3 / (log(1.0 + c) - c / (1.0 + c))
+        rs = self.r200 / c
+        x = r / rs
+
+        rhomean = self.rhomean
+
+        m = 4 * np.pi * del_c * rhomean * rs ** 3 * (log(1 + x) - x / (1 + x))  # noqa
+        return m * 1.0e12
+
+    def plot_rho(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
+
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        rho = self.get_rho(r)
+
+        plt = hickory.Plot()
+        plt.curve(r, rho)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
 
         plt.show()
 
-    def r_fmean(self, r200, c, fac):
-        """
-        Define the mean density within radius r as
-            rhor = M(r)/V(r)
+    def plot_m(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
 
-        return the radius where rhor = rho0*fac
-        where rho0 = omega_m*rhocrit is the mean density
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        mass = self.get_mass(r)
 
-        Use a root finder to get the value of r where the equation
-            rhomean - fac*rho0 = 0
+        plt = hickory.Plot()
+        plt.curve(r, mass)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
 
-        """
-        import scipy.optimize
+        plt.show()
 
-        guess = r200
-        r_fmean = scipy.optimize.fsolve(self.r_fmean_kernel, guess, args=(r200, c, fac))  # noqa
-        return r_fmean[0]
+    def plot_dsig(self, rmin=0.01, rmax=20.0, npts=1000):
+        import hickory
 
-    def r_fmean_kernel(self, r, r200, c, fac):
-        """
-        Used for solving for mmean
+        r = np.logspace(np.log10(rmin), np.log10(rmax), npts)
+        dsig = self.get_dsig(r)
 
-        rhor = M(r)/V(r) the mean density within radius r
-        for the NFW profile.
-        """
+        plt = hickory.Plot()
+        plt.curve(r, dsig)
+        plt.set_xscale('log')
+        plt.set_yscale('log')
 
-        return self.rhomean(r, r200, c) - fac * self.rho0
-
-    def r_fcrit(self, r200, c, fac):
-        """
-        Define the mean density within radius r as
-            rhor = M(r)/V(r)
-
-        return the radius where rhomean = rhocrit*fac. This
-        this should give us back r200 for fac=200
-
-        Use a root finder to get the value of r where the equation
-            rhomean - fac*rhocrit = 0
-
-        """
-        import scipy.optimize
-
-        guess = r200
-        r_fmean = scipy.optimize.fsolve(self.r_fcrit_kernel, guess, args=(r200, c, fac))  # noqa
-        return r_fmean[0]
-
-    def r_fcrit_kernel(self, r, r200, c, fac):
-        """
-        Used for solving for mmean
-
-        rhor = M(r)/V(r) the mean density within radius r
-        for the NFW profile.
-        """
-
-        return self.rhomean(r, r200, c) - fac * self.rhocrit
+        plt.show()
