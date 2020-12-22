@@ -265,6 +265,136 @@ def plot(
     return plt
 
 
+def plot_residuals(
+    *,
+    r,
+    dsig,
+    dsigcov,
+    z,
+    m200=None,
+    lm200=None,
+    b=None,
+    xlim=None,
+    ylim=None,
+    resid_axis_kw={},
+    no_resid_xticklabels=False,
+    no_resid_yticklabels=False,
+    plt=None,
+    show=False,
+):
+
+    import hickory
+
+    if b is None:
+        withlin = False
+    else:
+        withlin = True
+
+    fitter = NFWBiasFitter(z=z, r=r, withlin=withlin)
+    yfit = fitter.get_dsig(r=r, m200=m200, lm200=lm200, b=b)
+
+    dsigerr = np.sqrt(np.diag(dsigcov))
+
+    ymin, ymax = [
+        0.5 * (dsig - dsigerr).min(),
+        1.5 * (dsig + dsigerr).max(),
+    ]
+    if ymin < 0:
+        ymin = 0.1
+
+    if ylim is None:
+        ylim = [0.5*ymin, 1.5*ymax]
+
+    if xlim is None:
+        rmin, rmax = r.min(), r.max()
+        xlim = [0.5 * rmin, 1.5 * rmax]
+
+    if plt is None:
+        dolegend = True
+        plt = hickory.Plot(
+            xlabel=r"$r$ [Mpc]",
+            ylabel=r"$\Delta\Sigma ~ [\mathrm{M}_{\odot} \mathrm{pc}^{-2}]$",
+            xlim=xlim,
+            ylim=ylim,
+        )
+        if 'ylabel' not in resid_axis_kw:
+            resid_axis_kw['ylabel'] = r'$\Delta$'
+
+        plt.set_xscale('log')
+        plt.set_yscale('log')
+    else:
+        plt.set(xlim=xlim, ylim=ylim)
+        dolegend = False
+
+
+    alpha = 0.5
+    _residuals_plots(
+        plt=plt,
+        x=r, y=dsig, yerr=dsigerr, model=yfit,
+        resid_axis_kw=resid_axis_kw,
+        data_kw={'alpha': alpha},
+        model_kw={'label': 'model'},
+        no_resid_xticklabels=no_resid_xticklabels,
+        no_resid_yticklabels=no_resid_yticklabels,
+    )
+
+    if withlin:
+        yfit_lin = fitter.get_lin_dsig(r=r, b=b)
+        yfit_nfw = fitter.get_nfw_dsig(r=r, m200=m200, lm200=lm200)
+        plt.curve(r, yfit_nfw, label='nfw')
+        plt.curve(r, yfit_lin, label='linear')
+
+    if dolegend:
+        plt.legend()
+
+    if show:
+        plt.show()
+
+    return plt
+
+
+def _residuals_plots(
+    *, plt, x, y, model, yerr=None, frac=0.2, pad=0,
+    data_kw={}, model_kw={},
+    resid_axis_kw={},
+    no_resid_xticklabels=False,
+    no_resid_yticklabels=False,
+):
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(plt)
+    size_string = '%d%%' % (frac*100)
+    ax2 = divider.append_axes("bottom", size=size_string, pad=pad)
+    plt.figure.add_axes(ax2, label='%d' % np.random.randint(0, 2**15))
+
+    # residuals = model - y
+    residuals_err = yerr
+    residuals = (model - y) * x
+    residuals_err = yerr * x
+
+    ax2.set(**resid_axis_kw)
+    ax2.set_xscale('log')
+    ax2.axhline(0, color='black')
+
+    if yerr is not None:
+        plt.errorbar(x, y, yerr, **data_kw)
+        ax2.errorbar(x, residuals, residuals_err, **data_kw)
+    else:
+        plt.plot(x, y, **data_kw)
+        ax2.plot(x, residuals, **data_kw)
+
+    plt.curve(x, model, **model_kw)
+
+    # plt.set_xticks([])
+    # if no_xticks:
+    #     ax2.set_xticks([])
+    # if no_yticks:
+    #     ax2.set_yticks([])
+    if no_resid_xticklabels:
+        ax2.set_xticklabels([])
+    if no_resid_yticklabels:
+        ax2.set_yticklabels([])
+
+
 def fit_nfw_lin_dsig(
     *,
     z, r, dsig, dsigcov, guess,
