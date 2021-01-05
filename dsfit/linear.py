@@ -15,7 +15,7 @@ class Linear(object):
         # convert to Mpc^3
         self.rhomean = self.cosmo.rho_m(self.z) * 1000.0**3
 
-    def get_dsig(self, r):
+    def get_dsigold(self, r):
         """
         Get DeltaSigma in units of Msolar/pc^2
 
@@ -37,6 +37,48 @@ class Linear(object):
         drho = self.get_drho(r)
 
         sig = project.project3d(r, drho)
+        dsig = self.sigma2dsig(r=r, sig=sig)
+
+        return dsig
+
+    def get_dsig(self, r):
+        """
+        Get DeltaSigma in units of Msolar/pc^2
+
+        Parameters
+        ----------
+        z: float
+            Redshift at which to evaluate
+        r: array
+            radii in Mpc
+        b: float, optional
+            bias
+
+        Returns
+        -------
+        DeltaSigma: array
+            Same shape as r
+        """
+
+        # we need to go beyond the requested r
+        rmax = r.max()
+        rmax_extended = rmax*2
+        numextra = 3
+        rextra = np.logspace(
+            np.log10(rmax),
+            np.log10(rmax_extended),
+            numextra+1,
+        )
+
+        r_extended = np.zeros(r.size + numextra)
+        r_extended[:r.size] = r
+        r_extended[r.size:] = rextra[1:]
+
+        drho_extended = self.get_drho(r_extended)
+
+        sig = project.project3d(r_extended, drho_extended, extrapolate=False)
+        sig = sig[:r.size]
+
         dsig = self.sigma2dsig(r=r, sig=sig)
 
         return dsig
